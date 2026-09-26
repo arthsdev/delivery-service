@@ -16,3 +16,6 @@ spring:
           preferred_uuid_jdbc_type: CHAR
   flyway:
     enabled: true
+
+server:
+  port: 8081

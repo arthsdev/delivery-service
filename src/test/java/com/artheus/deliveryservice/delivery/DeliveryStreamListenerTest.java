@@ -9,6 +9,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.connection.stream.StreamRecords;
@@ -91,12 +92,12 @@ class DeliveryStreamListenerTest {
         UUID subscriptionId = UUID.randomUUID();
         MapRecord<String, String, String> message = messageWith(validFields(eventId, subscriptionId));
 
-        org.mockito.Mockito.doThrow(new RuntimeException("db down"))
-                .when(deliveryAttemptService).create(org.mockito.ArgumentMatchers.any());
+        doThrow(new RuntimeException("db down"))
+                .when(deliveryAttemptService).create(any());
 
         listener.onMessage(message);
 
-        verify(deliveryAttemptService).create(org.mockito.ArgumentMatchers.any());
+        verify(deliveryAttemptService).create(any());
         verifyNoInteractions(redisTemplate);
     }
 
@@ -135,6 +136,40 @@ class DeliveryStreamListenerTest {
         listener.onMessage(message);
 
         verifyNoInteractions(deliveryAttemptService);
+        verify(streamOperations).acknowledge(STREAM_KEY, GROUP, message.getId());
+    }
+
+    @Test
+    void shouldAcknowledgeAndSkipCreateWhenFieldIsMissing() {
+        // No "eventId" key: UUID.fromString(null) throws NullPointerException
+        Map<String, String> missingFields = Map.of(
+                "subscriptionId", UUID.randomUUID().toString(),
+                "targetUrl", "https://webhook.site/test",
+                "payload", "{\"orderId\":123}"
+        );
+        MapRecord<String, String, String> message = messageWith(missingFields);
+
+        doReturn(streamOperations).when(redisTemplate).opsForStream();
+
+        listener.onMessage(message);
+
+        verifyNoInteractions(deliveryAttemptService);
+        verify(streamOperations).acknowledge(STREAM_KEY, GROUP, message.getId());
+    }
+
+    @Test
+    void shouldNotPropagateExceptionWhenAcknowledgeFails() {
+        UUID eventId = UUID.randomUUID();
+        UUID subscriptionId = UUID.randomUUID();
+        MapRecord<String, String, String> message = messageWith(validFields(eventId, subscriptionId));
+
+        doReturn(streamOperations).when(redisTemplate).opsForStream();
+        doThrow(new RedisConnectionFailureException("redis down"))
+                .when(streamOperations).acknowledge(anyString(), anyString(), any(RecordId.class));
+
+        assertDoesNotThrow(() -> listener.onMessage(message));
+
+        verify(deliveryAttemptService).create(any());
         verify(streamOperations).acknowledge(STREAM_KEY, GROUP, message.getId());
     }
 }

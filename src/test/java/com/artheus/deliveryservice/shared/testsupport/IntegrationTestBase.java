@@ -26,5 +26,6 @@ public abstract class IntegrationTestBase {
         registry.add("spring.data.redis.url", () -> "redis://localhost:6379");
         registry.add("spring.datasource.username", mysql::getUsername);
         registry.add("spring.datasource.password", mysql::getPassword);
+        registry.add("event-stream.consumer.enabled", () -> "false");
     }
 }

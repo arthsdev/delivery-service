@@ -11,7 +11,6 @@ import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.ReadOffset;
 import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.stream.StreamListener;
 import org.springframework.data.redis.stream.StreamMessageListenerContainer;
 import org.springframework.stereotype.Component;
 
@@ -22,6 +21,7 @@ public class DeliveryStreamConsumer implements ApplicationRunner {
 
     private final StreamMessageListenerContainer<String, MapRecord<String, String, String>> container;
     private final StringRedisTemplate redisTemplate;
+    private final DeliveryStreamListener deliveryStreamListener;
     private final String streamKey;
     private final String groupName;
     private final String consumerName;
@@ -29,11 +29,13 @@ public class DeliveryStreamConsumer implements ApplicationRunner {
     public DeliveryStreamConsumer(
             StreamMessageListenerContainer<String, MapRecord<String, String, String>> container,
             StringRedisTemplate redisTemplate,
+            DeliveryStreamListener deliveryStreamListener,
             @Value("${event-stream.deliveries-key}") String streamKey,
             @Value("${event-stream.group}") String groupName,
             @Value("${event-stream.consumer-name}") String consumerName) {
         this.container = container;
         this.redisTemplate = redisTemplate;
+        this.deliveryStreamListener = deliveryStreamListener;
         this.streamKey = streamKey;
         this.groupName = groupName;
         this.consumerName = consumerName;
@@ -50,15 +52,10 @@ public class DeliveryStreamConsumer implements ApplicationRunner {
             log.info("Consumer group '{}' already exists for stream '{}', continuing startup.", groupName, streamKey);
         }
 
-        StreamListener<String, MapRecord<String, String, String>> listener = message -> {
-            log.info("Message received from Stream - ID: {}, Stream: {}, Payload: {}",
-                    message.getId(), message.getStream(), message.getValue());
-        };
-
         container.receive(
                 Consumer.from(groupName, consumerName),
                 StreamOffset.create(streamKey, ReadOffset.lastConsumed()),
-                listener
+                deliveryStreamListener
         );
     }
 

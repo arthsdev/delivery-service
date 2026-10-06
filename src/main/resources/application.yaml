@@ -5,6 +5,9 @@ spring:
     url: jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}
     username: ${DB_USER}
     password: ${DB_PASSWORD}
+  data:
+    redis:
+      url: ${REDIS_URL}
   jpa:
     open-in-view: false
     hibernate:
@@ -16,6 +19,11 @@ spring:
           preferred_uuid_jdbc_type: CHAR
   flyway:
     enabled: true
-
 server:
   port: 8081
+
+event-stream:
+  deliveries-key: ${EVENT_STREAM_DELIVERIES_KEY:webhook.deliveries.requested}
+  group: delivery-service
+  consumer-name: ${EVENT_STREAM_CONSUMER_NAME:delivery-service-1}
+  poll-timeout: 10s

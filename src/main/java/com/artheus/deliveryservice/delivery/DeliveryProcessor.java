@@ -2,12 +2,16 @@ package com.artheus.deliveryservice.delivery;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.jspecify.annotations.NonNull;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.UUID;
@@ -34,12 +38,7 @@ public class DeliveryProcessor {
         deliveryAttemptRepository.save(attempt);
 
         try {
-            restClient.post()
-                    .uri(attempt.getTargetUrl())
-                    .body(attempt.getPayload())
-                    .retrieve()
-                    .toBodilessEntity();
-
+            getBodilessEntity(attempt);
             attempt.markSuccess();
             log.info("Delivery succeeded for attempt {}", publicId);
 
@@ -49,6 +48,15 @@ public class DeliveryProcessor {
         }
 
         deliveryAttemptRepository.save(attempt);
+    }
+
+    private @NonNull ResponseEntity<Void> getBodilessEntity(DeliveryAttempt attempt) {
+        return restClient.post()
+                .uri(attempt.getTargetUrl())
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(attempt.getPayload().getBytes(StandardCharsets.UTF_8))
+                .retrieve()
+                .toBodilessEntity();
     }
 
     private static org.springframework.http.client.ClientHttpRequestFactory clientRequestFactory() {

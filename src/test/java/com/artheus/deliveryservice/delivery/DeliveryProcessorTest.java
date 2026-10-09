@@ -7,10 +7,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -102,5 +104,44 @@ class DeliveryProcessorTest {
                 .isInstanceOf(DeliveryAttemptNotFoundException.class);
 
         verify(repository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Should deliver the payload as application/json")
+    void shouldSendPayloadAsJson() {
+        UUID publicId = UUID.randomUUID();
+        String targetUrl = "https://webhook.site/test";
+        DeliveryAttempt attempt = spy(DeliveryAttempt.create(
+                UUID.randomUUID(), UUID.randomUUID(), targetUrl, "{\"event\":\"order_created\"}", clock));
+        when(repository.findByPublicId(publicId)).thenReturn(Optional.of(attempt));
+
+        mockServer.expect(requestTo(targetUrl))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andRespond(withSuccess());
+
+        processor.process(publicId);
+
+        mockServer.verify();
+    }
+
+    @Test
+    @DisplayName("Should encode the payload as UTF-8")
+    void shouldEncodePayloadAsUtf8() {
+        UUID publicId = UUID.randomUUID();
+        String targetUrl = "https://webhook.site/test";
+        String payload = "{\"nome\":\"ação\"}";
+        DeliveryAttempt attempt = spy(DeliveryAttempt.create(
+                UUID.randomUUID(), UUID.randomUUID(), targetUrl, payload, clock));
+        when(repository.findByPublicId(publicId)).thenReturn(Optional.of(attempt));
+
+        mockServer.expect(requestTo(targetUrl))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().bytes(payload.getBytes(StandardCharsets.UTF_8)))
+                .andRespond(withSuccess());
+
+        processor.process(publicId);
+
+        mockServer.verify();
     }
 }

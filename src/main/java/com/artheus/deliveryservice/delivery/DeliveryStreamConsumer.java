@@ -52,11 +52,15 @@ public class DeliveryStreamConsumer implements ApplicationRunner {
             log.info("Consumer group '{}' already exists for stream '{}', continuing startup.", groupName, streamKey);
         }
 
-        container.receive(
-                Consumer.from(groupName, consumerName),
-                StreamOffset.create(streamKey, ReadOffset.lastConsumed()),
-                deliveryStreamListener
-        );
+        StreamMessageListenerContainer.ConsumerStreamReadRequest<String> readRequest =
+                StreamMessageListenerContainer.ConsumerStreamReadRequest
+                        .builder(StreamOffset.create(streamKey, ReadOffset.lastConsumed()))
+                        .consumer(Consumer.from(groupName, consumerName))
+                        .autoAcknowledge(false)
+                        .cancelOnError(throwable -> false)
+                        .build();
+
+        container.register(readRequest, deliveryStreamListener);
     }
 
     private boolean isBusyGroupException(Throwable throwable) {

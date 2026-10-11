@@ -27,3 +27,4 @@ event-stream:
   group: delivery-service
   consumer-name: ${EVENT_STREAM_CONSUMER_NAME:delivery-service-1}
   poll-timeout: 10s
+  retry-pause: 3s

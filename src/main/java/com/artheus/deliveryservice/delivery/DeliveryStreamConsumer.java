@@ -1,10 +1,14 @@
 package com.artheus.deliveryservice.delivery;
 
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.core.NestedExceptionUtils;
+import org.springframework.dao.QueryTimeoutException;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.RedisSystemException;
 import org.springframework.data.redis.connection.stream.Consumer;
 import org.springframework.data.redis.connection.stream.MapRecord;
@@ -13,6 +17,8 @@ import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.stream.StreamMessageListenerContainer;
 import org.springframework.stereotype.Component;
+
+import java.time.Duration;
 
 @Slf4j
 @Component
@@ -25,6 +31,9 @@ public class DeliveryStreamConsumer implements ApplicationRunner {
     private final String streamKey;
     private final String groupName;
     private final String consumerName;
+    private final Duration retryPause;
+
+    private volatile Thread setupThread;
 
     public DeliveryStreamConsumer(
             StreamMessageListenerContainer<String, MapRecord<String, String, String>> container,
@@ -32,17 +41,53 @@ public class DeliveryStreamConsumer implements ApplicationRunner {
             DeliveryStreamListener deliveryStreamListener,
             @Value("${event-stream.deliveries-key}") String streamKey,
             @Value("${event-stream.group}") String groupName,
-            @Value("${event-stream.consumer-name}") String consumerName) {
+            @Value("${event-stream.consumer-name}") String consumerName,
+            @Value("${event-stream.retry-pause:3s}") Duration retryPause) {
         this.container = container;
         this.redisTemplate = redisTemplate;
         this.deliveryStreamListener = deliveryStreamListener;
         this.streamKey = streamKey;
         this.groupName = groupName;
         this.consumerName = consumerName;
+        this.retryPause = retryPause;
     }
 
     @Override
     public void run(ApplicationArguments args) {
+        Thread thread = new Thread(this::setUpUntilSuccessful, "stream-consumer-setup");
+        thread.setDaemon(true);
+        setupThread = thread;
+        thread.start();
+    }
+
+    @PreDestroy
+    void stop() {
+        Thread thread = setupThread;
+        if (thread != null) {
+            thread.interrupt();
+        }
+    }
+
+    private void setUpUntilSuccessful() {
+        while (!Thread.currentThread().isInterrupted()) {
+            try {
+                createGroupIfMissing();
+                container.register(readRequest(), deliveryStreamListener);
+                log.info("Stream consumer registered [key={}, group={}, consumer={}]",
+                        streamKey, groupName, consumerName);
+                return;
+            } catch (RedisConnectionFailureException | QueryTimeoutException e) {
+                Throwable cause = NestedExceptionUtils.getMostSpecificCause(e);
+                log.warn("Redis unavailable, retrying the consumer setup in {}: {} ({})",
+                        retryPause, cause.getClass().getSimpleName(), cause.getMessage());
+                if (!pauseBeforeRetry()) {
+                    return;
+                }
+            }
+        }
+    }
+
+    private void createGroupIfMissing() {
         try {
             redisTemplate.opsForStream().createGroup(streamKey, ReadOffset.from("0"), groupName);
         } catch (RedisSystemException e) {
@@ -51,16 +96,25 @@ public class DeliveryStreamConsumer implements ApplicationRunner {
             }
             log.info("Consumer group '{}' already exists for stream '{}', continuing startup.", groupName, streamKey);
         }
+    }
 
-        StreamMessageListenerContainer.ConsumerStreamReadRequest<String> readRequest =
-                StreamMessageListenerContainer.ConsumerStreamReadRequest
-                        .builder(StreamOffset.create(streamKey, ReadOffset.lastConsumed()))
-                        .consumer(Consumer.from(groupName, consumerName))
-                        .autoAcknowledge(false)
-                        .cancelOnError(throwable -> false)
-                        .build();
+    private StreamMessageListenerContainer.ConsumerStreamReadRequest<String> readRequest() {
+        return StreamMessageListenerContainer.ConsumerStreamReadRequest
+                .builder(StreamOffset.create(streamKey, ReadOffset.lastConsumed()))
+                .consumer(Consumer.from(groupName, consumerName))
+                .autoAcknowledge(false)
+                .cancelOnError(throwable -> false)
+                .build();
+    }
 
-        container.register(readRequest, deliveryStreamListener);
+    private boolean pauseBeforeRetry() {
+        try {
+            Thread.sleep(retryPause.toMillis());
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     private boolean isBusyGroupException(Throwable throwable) {
